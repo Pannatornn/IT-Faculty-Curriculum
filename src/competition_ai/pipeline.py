@@ -138,7 +138,7 @@ class CompetitionPipeline:
         self.evidence = evidence
 
         import re; import os; from pathlib import Path
-                (os.getenv("THAILLM_RUNTIME_DIR") or ("/tmp/it-faculty-curriculum" if os.getenv("VERCEL") else Path(__file__).resolve().parents[2]))
+        runtime_root = Path(os.getenv("THAILLM_RUNTIME_DIR") or ("/tmp/it-faculty-curriculum" if os.getenv("VERCEL") else settings.root))
 
         self.cache = DiskCache(
             runtime_root,
