@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os; from pathlib import Path
 import time
 import re
 
@@ -136,15 +137,16 @@ class CompetitionPipeline:
         self.catalog = catalog
         self.evidence = evidence
 
-        self.llm = ThaiLLMClient(settings)
+        import re; import os; from pathlib import Path
+                (os.getenv("THAILLM_RUNTIME_DIR") or ("/tmp/it-faculty-curriculum" if os.getenv("VERCEL") else Path(__file__).resolve().parents[2]))
 
         self.cache = DiskCache(
-            settings.root,
+            runtime_root,
             settings.cache_ttl,
         )
 
         self.telemetry = Telemetry(
-            settings.root
+            runtime_root
         )
 
     def _plan(
