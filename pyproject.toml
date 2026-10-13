@@ -3,14 +3,11 @@ name = "it-faculty-curriculum"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "requests>=2.32",
-    "python-dotenv>=1.0",
-    "pydantic>=2.7",
-    "pypdf>=4.2",
-    "python-docx>=1.1",
-    "pandas>=2.2",
-    "openpyxl>=3.1",
-    "starlette>=0.37",
+    "starlette>=0.46,<2",
+    "requests>=2.32,<3",
+    "python-dotenv>=1.0,<2",
+    "openpyxl>=3.1,<4",
+    "langdetect>=1.0.9,<2",
 ]
 
 [tool.pytest.ini_options]
