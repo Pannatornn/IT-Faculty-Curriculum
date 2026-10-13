@@ -135,7 +135,7 @@ class CompetitionPipeline:
     ):
         self.s = settings
         self.catalog = catalog
-        self.evidence = evidence
+        self.evidence = evidence;        self.llm = ThaiLLMClient(settings)
 
         import re; import os; from pathlib import Path
         runtime_root = Path(os.getenv("THAILLM_RUNTIME_DIR") or ("/tmp/it-faculty-curriculum" if os.getenv("VERCEL") else settings.root))
