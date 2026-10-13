@@ -18,7 +18,7 @@ class Settings:
     root: Path = ROOT
     api_url: str = os.getenv(
         "THAILLM_API_URL",
-        "http://thaillm.or.th/api/v1/chat/completions"
+        "https://thaillm.or.th/api/v1/chat/completions"
     )
     api_key: str = os.getenv("THAILLM_API_KEY", "").strip()
     model: str = os.getenv("THAILLM_MODEL", "openthaigpt").strip()
