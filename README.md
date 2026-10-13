@@ -41,6 +41,15 @@ THAILLM_API_KEY=YOUR_KEY
 
 ระบบตั้ง endpoint/model ไว้ให้แล้ว
 
+## ตั้งค่า API key บน Vercel
+
+1. เปิด Vercel Project → **Settings → Environment Variables**
+2. เพิ่ม `THAILLM_API_KEY` และใส่ ThaiLLM API key ในช่อง Value
+3. เลือก Environment ที่ใช้งาน (Production และ Preview ตามต้องการ) แล้วกด Save
+4. ไปที่ **Deployments** แล้ว Redeploy deployment ล่าสุด เพื่อให้ค่าใหม่มีผล
+
+เก็บ key เป็น Environment Variable ฝั่ง Vercel เท่านั้น ห้ามใส่ใน source code หรือ commit ลง GitHub แอปใช้ key นี้ฝั่ง server และหน้าเว็บจะส่ง key เฉพาะเมื่อผู้ใช้เลือกใส่ custom session key เอง
+
 ## ครั้งต่อไป
 
 `RUN_WINDOWS.bat`
