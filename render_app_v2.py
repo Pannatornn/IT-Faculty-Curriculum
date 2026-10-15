@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import time
 
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route
@@ -38,61 +40,71 @@ async def api_ask(req: Request):
     if x := core.limited(req, "ask"):
         return x
 
-    question = ""
     try:
         body = await req.json()
-        question = str(body.get("question", "")).strip()
-        if not question:
-            return JSONResponse({"error": "question is required"}, status_code=400)
+    except (ValueError, UnicodeDecodeError):
+        return JSONResponse({"error": "body must be valid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    raw_question = body.get("question")
+    if not isinstance(raw_question, str) or not raw_question.strip():
+        return JSONResponse({"error": "question must be a non-empty string"}, status_code=400)
+    if len(raw_question) > 4000:
+        return JSONResponse({"error": "question is limited to 4000 characters"}, status_code=400)
+    question = raw_question.strip()
 
-        forced = body.get("program")
-        forced = forced if forced in {"AIT", "DSBA", "IT", "IT_INTER"} else None
-        result = resilient_pipe(req).ask(question, forced_program=forced)
+    forced = body.get("program")
+    forced = forced if isinstance(forced, str) and forced in {"AIT", "DSBA", "IT", "IT_INTER"} else None
+    try:
+        result = await asyncio.wait_for(
+            run_in_threadpool(lambda: resilient_pipe(req).ask(question, forced_program=forced)),
+            timeout=core.PUBLIC_QUERY_TIMEOUT_SECONDS,
+        )
         return JSONResponse(core.response_payload(question, result))
-
+    except TimeoutError:
+        return JSONResponse(
+            {"error": "The answer took too long. Please try again.", "type": "TIMEOUT", "retryable": True},
+            status_code=504,
+        )
     except Exception as exc:
         # Competition invariant: never return a blank answer for a valid row.
-        if question:
-            fallback = nonempty_error_result(question, core.clean_error(exc))
-            payload = core.response_payload(question, fallback)
-            payload["degraded"] = True
-            payload["degradedReason"] = "temporary processing failure; rerun recommended"
-            return JSONResponse(payload, status_code=200)
-        return JSONResponse(
-            {"error": "ระบบวิเคราะห์คำถามขัดข้องชั่วคราว", "detail": core.clean_error(exc)},
-            status_code=500,
-        )
+        fallback = nonempty_error_result(question, core.clean_error(exc))
+        payload = core.response_payload(question, fallback)
+        payload["degraded"] = True
+        payload["degradedReason"] = "temporary processing failure; rerun recommended"
+        return JSONResponse(payload, status_code=200)
 
 
 async def api_run_batch(req: Request):
-    if x := core.limited(req, "batch", limit=max(2, core.RATE // 4)):
+    if x := core.limited(req, "batch", limit=max(100, core.RATE)):
         return x
 
     try:
         body = await req.json()
-        questions = [
-            str(q).strip()
-            for q in body.get("questions", [])
-            if str(q).strip()
-        ]
-        if not questions:
-            return JSONResponse({"error": "questions is required"}, status_code=400)
-        if len(questions) > 100:
+        if not isinstance(body, dict) or not isinstance(body.get("questions"), list):
+            return JSONResponse({"error": "questions must be an array of strings"}, status_code=400)
+        supplied = body["questions"]
+        if not supplied or any(not isinstance(q, str) or not q.strip() or len(q) > 4000 for q in supplied):
+            return JSONResponse({"error": "Each question must be a non-empty string up to 4000 characters"}, status_code=400)
+        if len(supplied) > 100:
             return JSONResponse({"error": "batch is limited to 100 questions"}, status_code=400)
+        questions = [q.strip() for q in supplied]
 
-        pipeline = resilient_pipe(req)
         rows = []
         batch_started = time.perf_counter()
 
         for idx, question in enumerate(questions, 1):
             started = time.perf_counter()
             try:
-                result = pipeline.ask(question)
+                # A fresh budget per item; the UI runs one bounded item per
+                # request so Stop/Resume does not restart completed questions.
+                pipeline = resilient_pipe(req)
+                result = await asyncio.wait_for(run_in_threadpool(pipeline.ask, question), timeout=90)
             except Exception as exc:
                 result = nonempty_error_result(question, core.clean_error(exc))
 
             payload = core.response_payload(question, result)
-            answer = str(result.answer or "").strip()
+            answer = str(payload["answer"] or "").strip()
             if not answer:
                 result = nonempty_error_result(question, "empty answer guard")
                 payload = core.response_payload(question, result)
@@ -102,7 +114,8 @@ async def api_run_batch(req: Request):
                 "id": idx,
                 "question": question,
                 "answer": answer,
-                "status": result.status,
+                "status": payload["status"],
+                "degraded": payload.get("degraded", False),
                 "language": payload["language"] or detect_language(question),
                 "confidence": payload["confidence"],
                 "program": payload["programDetected"] or "",
@@ -120,6 +133,8 @@ async def api_run_batch(req: Request):
             "blankAnswers": sum(1 for row in rows if not str(row["answer"]).strip()),
         })
 
+    except ValueError:
+        return JSONResponse({"error": "Invalid JSON request"}, status_code=400)
     except Exception as exc:
         return JSONResponse(
             {"error": "batch runner failed", "detail": core.clean_error(exc)},

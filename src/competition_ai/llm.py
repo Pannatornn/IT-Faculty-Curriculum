@@ -111,12 +111,18 @@ class ThaiLLMClient:
         for attempt in range(
             self.s.retries + 1
         ):
+            remaining = (
+                self.s.request_deadline - time.monotonic()
+                if self.s.request_deadline is not None else float(self.s.timeout)
+            )
+            if remaining <= 0:
+                raise ThaiLLMError("Request time limit exceeded. Please retry.")
             try:
                 r = requests.post(
                     self.s.api_url,
                     headers=headers,
                     json=payload,
-                    timeout=self.s.timeout
+                    timeout=max(0.1, min(float(self.s.timeout), remaining))
                 )
 
                 if r.status_code >= 400:
@@ -143,9 +149,10 @@ class ThaiLLMClient:
                 last = exc
 
                 if attempt < self.s.retries:
-                    time.sleep(
-                        0.6 * (attempt + 1)
-                    )
+                    pause = 0.6 * (attempt + 1)
+                    if self.s.request_deadline is not None:
+                        pause = min(pause, max(0, self.s.request_deadline - time.monotonic()))
+                    time.sleep(pause)
 
         raise ThaiLLMError(
             f"ThaiLLM API ล้มเหลว: {last}"

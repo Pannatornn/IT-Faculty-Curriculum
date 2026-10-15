@@ -24,6 +24,9 @@ class Settings:
     model: str = os.getenv("THAILLM_MODEL", "openthaigpt").strip()
 
     timeout: int = int(os.getenv("THAILLM_TIMEOUT_SECONDS", "120"))
+    # Monotonic request budget is assigned by the web entrypoint. It bounds the
+    # combined planner, reranker, answer and verification calls, including retries.
+    request_deadline: float | None = None
     retries: int = int(os.getenv("THAILLM_MAX_RETRIES", "2"))
     max_tokens: int = int(os.getenv("THAILLM_MAX_TOKENS", "1600"))
     temperature: float = float(os.getenv("THAILLM_TEMPERATURE", "0"))

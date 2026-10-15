@@ -97,9 +97,11 @@ def detect_programs(question: str, catalog: dict) -> list[str]:
 
     if "IT_INTER" in hits and "IT" in hits:
         explicit_plain_it = bool(
-            re.search(r"(?<![A-Za-z0-9_])it(?:[\s_-]*2565)?(?![A-Za-z0-9_])", q)
-            and not re.search(
-                r"(?<![A-Za-z0-9_])it[\s_-]*(?:inter|international)(?![A-Za-z0-9_])",
+            re.search(
+                # Test each IT occurrence. An international-program mention
+                # elsewhere must not erase a separate plain IT in a comparison.
+                r"(?<![A-Za-z0-9_])it(?:[\s_-]*2565)?(?![A-Za-z0-9_])"
+                r"(?![\s_-]*(?:inter|international)(?![A-Za-z0-9_]))",
                 q,
             )
         )

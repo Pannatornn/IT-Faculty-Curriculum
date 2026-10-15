@@ -9,32 +9,15 @@ FINAL_UI_PATCH = r'''<script>
   style.id='chatViewportFix';
   style.textContent=`
     html,body{height:100%;overflow:hidden!important}
-    .shell{height:100vh!important}
+    .shell{height:100vh!important;height:100dvh!important}
     .main{min-height:0!important;overflow:hidden!important}
     .thread{min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important}
-    .thread-inner{padding-bottom:180px!important;max-width:820px!important}
+    .thread-inner{padding-bottom:var(--composer-space,180px)!important;max-width:820px!important}
     .msg,.bubble{max-width:100%!important;overflow-wrap:anywhere!important}
-    .evidence{max-height:260px!important;overflow:auto!important}
+    .evidence{max-height:none!important;overflow:visible!important}
     .ev{font-size:12px!important}
   `;
   document.head.appendChild(style);
-
-  // Make evidence less overwhelming while preserving access to full content.
-  document.querySelectorAll('.evidence').forEach(box=>{
-    if(box.children.length>5 && !box.dataset.collapsed){
-      box.dataset.collapsed='true';
-      [...box.children].forEach((e,i)=>{if(i>=5)e.style.display='none'});
-      const btn=document.createElement('button');
-      btn.textContent='Show all evidence';
-      btn.className='secondary';
-      btn.style.marginTop='8px';
-      btn.onclick=()=>{
-        [...box.children].forEach(e=>e.style.display='block');
-        btn.remove();
-      };
-      box.parentElement?.appendChild(btn);
-    }
-  });
 
   // Keep Google OAuth deferred until provider setup is completed.
   const google=document.querySelector('#googleAuthBtn');

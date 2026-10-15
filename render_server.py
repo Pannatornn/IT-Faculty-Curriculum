@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import asyncio
 import os
 import re
 import sys
@@ -11,14 +13,19 @@ from typing import Any
 
 import requests
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
+
+from citation_view import evidence_excerpt, public_answer, source_url
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from competition_ai.config import SETTINGS, Settings
+from competition_ai.batch_fallback import nonempty_error_result
 from competition_ai.knowledge import load_catalog, load_evidence
 from competition_ai.pipeline import balance_evidence_by_program
 from competition_ai.policy import detect_language
@@ -31,6 +38,7 @@ from render_ui import INDEX_HTML
 CATALOG = load_catalog(ROOT)
 EVIDENCE = load_evidence(ROOT, CATALOG)
 MODEL_DISPLAY = "OpenThaiGPT-ThaiLLM-8B-Instruct-v7.2"
+PUBLIC_QUERY_TIMEOUT_SECONDS = 90
 
 LABELS = {
     "AIT": "AIT — เทคโนโลยีปัญญาประดิษฐ์",
@@ -88,7 +96,11 @@ def request_settings(req: Request, *, fast: bool = False) -> Settings:
     # A browser-supplied key is request-scoped. It is never written to disk,
     # logs, GitHub, or environment variables. If absent, Render's secret is used.
     supplied = req.headers.get("x-thaillm-api-key", "").strip()
-    base = replace(SETTINGS, api_key=(supplied or SETTINGS.api_key))
+    budget = max(5, min(85, int(os.getenv("THAILLM_REQUEST_TIMEOUT_SECONDS", "85"))))
+    base = replace(
+        SETTINGS, api_key=(supplied or SETTINGS.api_key),
+        request_deadline=time.monotonic() + budget,
+    )
     if fast:
         return replace(
             base,
@@ -119,6 +131,12 @@ def confidence_of(result: Any) -> float:
 
 def response_payload(question: str, result: Any) -> dict[str, Any]:
     conf = confidence_of(result)
+    answer = public_answer(result.answer)
+    status = result.status
+    if not answer:
+        answer = nonempty_error_result(question, "empty public answer").answer
+        status = "RETRY_REQUIRED"
+        conf = 0.0
     evs = [
         {
             "id": e.id,
@@ -127,8 +145,10 @@ def response_payload(question: str, result: Any) -> dict[str, Any]:
             "page": f"หน้า {e.page}" if e.page else "ไม่ระบุหน้า",
             "pageNumber": int(e.page or 0),
             "programCode": e.program,
-            "quoteTh": e.text,
-            "quoteEn": e.text,
+            "excerpt": evidence_excerpt(e.text, question, answer),
+            "quoteTh": evidence_excerpt(e.text, question, answer),
+            "quoteEn": evidence_excerpt(e.text, question, answer),
+            "sourceUrl": source_url(e.source, e.page),
             "confidence": conf,
         }
         for e in getattr(result, "evidence", [])
@@ -139,25 +159,25 @@ def response_payload(question: str, result: Any) -> dict[str, Any]:
     if not points:
         points = [
             re.sub(r"^[\-•*\d.\s]+", "", x).strip()
-            for x in (result.answer or "").splitlines()
+            for x in answer.splitlines()
             if len(x.strip()) > 12
         ][:4]
 
     detected_language = (getattr(result, "debug", {}) or {}).get("language") or detect_language(question)
     return {
         "question": question,
-        "answer": result.answer,
-        "answerTh": result.answer,
-        "answerEn": result.answer,
+        "answer": answer,
+        "answerTh": answer,
+        "answerEn": answer,
         "language": detected_language,
-        "status": result.status,
+        "status": status,
         "programDetected": (
             " / ".join(LABELS.get(x, x) for x in result.programs)
             if getattr(result, "programs", None) else None
         ),
         "confidence": conf,
         "supportedByEvidence": bool(getattr(result, "evidence", []))
-        and result.status in {"SUPPORTED", "PARTIALLY_SUPPORTED", "CHECK_REQUIRED"},
+        and status in {"SUPPORTED", "PARTIALLY_SUPPORTED", "CHECK_REQUIRED"},
         "securityVerdict": (
             "PROMPT_INJECTION_BLOCKED" if result.status == "BLOCKED"
             else ("OUT_OF_SCOPE" if result.status == "OUT_OF_SCOPE" else "CLEAN")
@@ -166,6 +186,7 @@ def response_payload(question: str, result: Any) -> dict[str, Any]:
         "evidenceList": evs,
         "latencyMs": int(getattr(result, "latency_ms", 0) or 0),
         "cacheHit": bool(getattr(result, "cache_hit", False)),
+        "degraded": status in {"API_ERROR", "RETRY_REQUIRED", "ERROR", "TIMEOUT"},
         "model": SETTINGS.model,
         "modelDisplay": MODEL_DISPLAY,
     }
@@ -298,7 +319,7 @@ async def healthz(_: Request):
     return JSONResponse({"ok": True, "programs": len(CATALOG), "evidenceUnits": len(EVIDENCE)})
 
 
-async def api_health(req: Request):
+def api_health(req: Request):
     s = request_settings(req)
     ok = False
     detail = "THAILLM_API_KEY is not configured"
@@ -352,16 +373,27 @@ async def api_ask(req: Request):
 async def api_compare(req: Request):
     if x := limited(req, "compare"):
         return x
-    b: dict[str, Any] = {}
     try:
         b = await req.json()
-        left, right = str(b.get("left", "")), str(b.get("right", ""))
-        focus = str(b.get("focus", "")).strip()
-        ui_lang = str(b.get("language", "TH")).upper()
-        if left not in LABELS or right not in LABELS or left == right:
-            return JSONResponse({"error": "select two different valid programs"}, status_code=400)
-        if not focus:
-            focus = "program overview, courses, skills, and careers" if ui_lang == "EN" else "ภาพรวมหลักสูตร รายวิชา ทักษะ และอาชีพ"
+    except (ValueError, UnicodeDecodeError):
+        return JSONResponse({"error": "body must be valid JSON"}, status_code=400)
+    if not isinstance(b, dict):
+        return JSONResponse({"error": "body must be a JSON object"}, status_code=400)
+    left, right = b.get("left"), b.get("right")
+    if (
+        not isinstance(left, str) or not isinstance(right, str)
+        or left not in LABELS or right not in LABELS or left == right
+    ):
+        return JSONResponse({"error": "select two different valid programs"}, status_code=400)
+    focus = b.get("focus", "")
+    ui_lang = b.get("language", "TH")
+    if not isinstance(focus, str) or len(focus) > 4000 or not isinstance(ui_lang, str):
+        return JSONResponse({"error": "focus must be a string of at most 4000 characters"}, status_code=400)
+    focus = focus.strip()
+    if not focus:
+        focus = "program overview, courses, skills, and careers" if ui_lang.upper() == "EN" else "ภาพรวมหลักสูตร รายวิชา ทักษะ และอาชีพ"
+
+    def compare_report():
         language = detect_language(focus)
         q = f"{focus}\nPrograms: {left} vs {right}"
         sc = matrix(left, right, focus)
@@ -371,9 +403,20 @@ async def api_compare(req: Request):
             r = p._ensure_answer_language(q, r)
             out = response_payload(q, r)
             out.update({"left": left, "right": right, "focus": focus, "language": language, "structuredComparison": sc, "degraded": False})
-            return JSONResponse(out)
+            return out
         except Exception as upstream:
-            return JSONResponse(fallback_compare_payload(left, right, focus, language, upstream))
+            return fallback_compare_payload(left, right, focus, language, upstream)
+
+    try:
+        out = await asyncio.wait_for(
+            run_in_threadpool(compare_report), timeout=PUBLIC_QUERY_TIMEOUT_SECONDS,
+        )
+        return JSONResponse(out)
+    except TimeoutError:
+        return JSONResponse(
+            {"error": "The comparison took too long. Please try again.", "type": "TIMEOUT", "retryable": True},
+            status_code=504,
+        )
     except Exception as e:
         return JSONResponse({"error": "ไม่สามารถสร้าง Comparison Report ได้", "detail": clean_error(e)}, status_code=500)
 
@@ -382,13 +425,25 @@ async def api_import_questions(req: Request):
     if x := limited(req, "import", limit=max(5, RATE)):
         return x
     try:
-        b = await req.json()
-        imported = decode_upload(str(b.get("filename", "")), str(b.get("contentBase64", "")))
+        raw = bytearray()
+        async for chunk in req.stream():
+            raw.extend(chunk)
+            if len(raw) > 12 * 1024 * 1024:
+                return JSONResponse({"error": "Upload request is too large"}, status_code=413)
+        import json
+        b = json.loads(raw)
+        if not isinstance(b, dict) or not isinstance(b.get("filename"), str) or not isinstance(b.get("contentBase64"), str):
+            return JSONResponse({"error": "filename and contentBase64 must be strings"}, status_code=400)
+        imported = await asyncio.wait_for(
+            run_in_threadpool(decode_upload, b["filename"], b["contentBase64"]), timeout=15,
+        )
         return JSONResponse({
             "filename": imported.filename, "sheet": imported.sheet, "header": imported.header,
             "count": len(imported.questions), "questions": imported.questions,
             "rowNumbers": imported.row_numbers,
         })
+    except TimeoutError:
+        return JSONResponse({"error": "Reading the question file took too long. Use a smaller file."}, status_code=408)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:

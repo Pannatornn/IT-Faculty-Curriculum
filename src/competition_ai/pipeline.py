@@ -1,7 +1,8 @@
 from __future__ import annotations
-import os; from pathlib import Path
+import os
 import time
 import re
+from pathlib import Path
 
 from .config import Settings
 from .models import (
@@ -135,10 +136,18 @@ class CompetitionPipeline:
     ):
         self.s = settings
         self.catalog = catalog
-        self.evidence = evidence;        self.llm = ThaiLLMClient(settings)
+        self.evidence = evidence
 
-        import re; import os; from pathlib import Path
-        runtime_root = Path(os.getenv("THAILLM_RUNTIME_DIR") or ("/tmp/it-faculty-curriculum" if os.getenv("VERCEL") else settings.root))
+        self.llm = ThaiLLMClient(settings)
+
+        runtime_root = Path(
+            os.getenv("THAILLM_RUNTIME_DIR")
+            or (
+                "/tmp/it-faculty-curriculum"
+                if os.getenv("VERCEL")
+                else settings.root
+            )
+        )
 
         self.cache = DiskCache(
             runtime_root,

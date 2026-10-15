@@ -105,56 +105,16 @@ CHAT_RUNTIME_PATCH = r'''<script>
     const state=document.querySelector('#authState');
     if(!sb){if(state)state.textContent='Cloud authentication is not configured.';return;}
     if(state)state.textContent='Redirecting to Google...';
-    const {error}=await sb.auth.signInWithOAuth({
-      provider:'google',
-      options:{redirectTo:window.location.origin+'/'},
-    });
-    if(error && state)state.textContent=error.message;
+    try{
+      const {error}=await withDeadline(sb.auth.signInWithOAuth({
+        provider:'google',
+        options:{redirectTo:window.location.origin+'/'},
+      }),CLOUD_WRITE_TIMEOUT_MS,'Google sign-in');
+      if(error && state)state.textContent=error.message;
+    }catch(_){if(state)state.textContent='Google sign-in could not connect. Please retry.';}
   };
   document.querySelector('#googleAuthBtn')?.addEventListener('click',window.signInWithGoogle);
 
-  openConversation = async function(id){
-    const c=conversations.find(x=>x.id===id); if(!c)return;
-    currentConversation=c; document.querySelector('#conversationTitle').textContent=c.title||'New Chat';
-    if(currentUser&&sb){
-      const {data,error}=await sb.from('messages').select('*').eq('conversation_id',id).order('created_at',{ascending:true});
-      messages=error?[]:(data||[]);
-    }else{
-      // Copy rather than alias c.messages. persistMessage writes to both the
-      // visible thread and stored conversation; aliasing caused duplicates.
-      messages=[...(c.messages||[])];
-    }
-    renderHistory(document.querySelector('#searchChats').value); renderMessages();
-    document.querySelector('#sidebar').classList.remove('open');
-  };
-
-  sendMessage = async function(){
-    const ta=document.querySelector('#composer'),q=ta.value.trim(); if(!q)return;
-    ta.value=''; autoSize(); document.querySelector('#sendBtn').disabled=true;
-    try{
-      await ensureConversation(q);
-      const history=messages.slice(-10).map(m=>({role:m.role,content:m.content}));
-      await persistMessage('user',q,{}); renderMessages(); addThinking();
-      const r=await fetch('/api/chat',{method:'POST',headers:apiHeaders(),body:JSON.stringify({question:q,history})});
-      const d=await r.json(); removeThinking();
-      const answer=d.answer||d.answerTh||d.error||'Unable to generate a response.';
-      await persistMessage('assistant',answer,{
-        status:d.status||'', language:d.language||'', programDetected:d.programDetected||'',
-        confidence:d.confidence??0, evidenceList:d.evidenceList||[], modelDisplay:d.modelDisplay||'',
-        contextualized:Boolean(d.contextualized)
-      });
-      renderMessages();
-    }catch(e){
-      removeThinking();
-      messages.push({id:uid(),role:'assistant',content:'Error: '+(e.message||e),metadata:{status:'ERROR'}});
-      renderMessages();
-    }finally{document.querySelector('#sendBtn').disabled=false;ta.focus()}
-  };
-
-  const saveKey=document.querySelector('#saveApiKey');
-  const clearKey=document.querySelector('#clearApiKey');
-  if(saveKey) saveKey.onclick=()=>{const k=document.querySelector('#apiKey').value.trim();if(k){sessionStorage.setItem('thaillm_api_key',k);document.querySelector('#apiKey').value='';document.querySelector('#keyState').textContent='Custom key is active for this session'}};
-  if(clearKey) clearKey.onclick=()=>{sessionStorage.removeItem('thaillm_api_key');document.querySelector('#keyState').textContent='Using the Render key'};
 })();
 </script>'''
 
