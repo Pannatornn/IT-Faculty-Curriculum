@@ -58,6 +58,48 @@ def _chinese_basic_facts(question: str, result: AnswerResult) -> str | None:
     return f"{label}课程共需修满{total}学分，学制为{duration}年。{citations}"
 
 
+def _chinese_opening_fact(question: str, result: AnswerResult) -> str | None:
+    """Use only a canonical opening date explicitly stated by the curriculum."""
+    if (
+        len(result.programs) != 1
+        or not re.search(r"(?:什么时候|何时).*(?:开课|开设)", question)
+        or re.search(r"学分|学制|学费|费用|工资|薪资|排名", question)
+    ):
+        return None
+    months = "มกราคม กุมภาพันธ์ มีนาคม เมษายน พฤษภาคม มิถุนายน กรกฎาคม สิงหาคม กันยายน ตุลาคม พฤศจิกายน ธันวาคม".split()
+    dates = []
+    for index, evidence in enumerate(result.evidence, 1):
+        if evidence.kind != "canonical" or evidence.program != result.programs[0] or evidence.metadata.get("topic") != "opening":
+            continue
+        match = re.search(r"เปิดสอนเดือน\s*(\S+)\s+พ\.?ศ\.?\s*(\d{4})\s+ภาคการศึกษาที่\s*(\d+)/(\d{4})", evidence.text)
+        if match and match[1] in months and match[2] == match[4] and 2400 <= int(match[2]) <= 2700:
+            dates.append((int(match[2]), months.index(match[1]) + 1, int(match[3]), index))
+    if len({date[:3] for date in dates}) != 1:
+        return None
+    buddhist_year, month, term, index = dates[0]
+    label = "IT International" if result.programs[0] == "IT_INTER" else result.programs[0]
+    return f"根据课程文件，{label}课程计划于{buddhist_year - 543}年{month}月（佛历{buddhist_year}年第{term}学期）开始开课。[E{index}]"
+
+
+def _answer_matches_language(question: str, answer: str, target: str) -> bool:
+    if target != "zh":
+        return detect_language(answer) == target
+    # Chinese answers can retain official Thai names or quote Thai evidence.
+    # The question detector deliberately prioritizes any Thai script; apply a
+    # separate check to the dominant answer prose rather than changing routing.
+    lines = answer.strip().splitlines()
+    normalized = lambda value: re.sub(r"[\s?？。!！]+", "", value)
+    if lines and normalized(lines[0]) == normalized(question):
+        lines = lines[1:]
+    prose = re.split(
+        r"^[ \t]*(?:证据|證據|引用|来源|來源|EVIDENCE|หลักฐาน)[ \t]*[:：]",
+        "\n".join(lines), maxsplit=1, flags=re.I | re.M,
+    )[0]
+    han = len(re.findall(r"[\u4E00-\u9FFF]", prose))
+    thai = len(re.findall(r"[\u0E00-\u0E7F]", prose))
+    return han >= 2 and han > thai
+
+
 class PolicyCompetitionPipeline(CompetitionPipeline):
     """Competition-facing universal pipeline used by the first page and batch runner."""
 
@@ -144,13 +186,13 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
         }:
             return result
         result.answer = public_answer(result.answer)
-        if not result.answer:
-            return nonempty_error_result(question, "empty visible answer")
         detected = detect_language(result.answer)
-        if detected == target:
+        if result.answer and _answer_matches_language(question, result.answer, target):
             return result
 
-        canonical = _chinese_basic_facts(question, result) if target == "zh" else None
+        canonical = (
+            _chinese_basic_facts(question, result) or _chinese_opening_fact(question, result)
+        ) if target == "zh" else None
         if canonical:
             result.answer = canonical
             result.status = "SUPPORTED"
@@ -160,6 +202,8 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
                 "language_enforced": True, "canonical_language_fallback": True,
             }
             return result
+        if not result.answer:
+            return nonempty_error_result(question, "empty visible answer")
 
         target_label = {
             "th": "Thai",
@@ -190,7 +234,7 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
                 max_tokens=self.s.max_tokens,
             )
             rewritten = public_answer(rewritten)
-            if not rewritten or detect_language(rewritten) != target:
+            if not rewritten or not _answer_matches_language(question, rewritten, target):
                 raise ValueError("Language rewrite did not produce the requested language")
             result.answer = rewritten
         except Exception as exc:

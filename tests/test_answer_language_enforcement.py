@@ -9,7 +9,9 @@ from competition_ai.knowledge import load_catalog, load_evidence
 from competition_ai.models import AnswerResult, Evidence
 from competition_ai.pipeline import CompetitionPipeline
 from competition_ai.policy import detect_language
-from competition_ai.policy_pipeline import PolicyCompetitionPipeline, _chinese_basic_facts
+from competition_ai.policy_pipeline import (
+    PolicyCompetitionPipeline, _answer_matches_language, _chinese_basic_facts, _chinese_opening_fact,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,3 +115,59 @@ def test_answer_writer_explicitly_receives_chinese_language_and_dump_prohibition
     assert detect_language(pipeline._answer(CHINESE_EASY_Q3, [])) == "zh"
     assert "Required answer language: Simplified Chinese" in captured["system"]
     assert "Never copy retrieval entries" in captured["system"]
+
+
+def test_chinese_main_answer_with_thai_proper_name_is_not_rejected_or_rewritten():
+    question = "AIT人工智能技术专业从什么时候开始招生开课?"
+    answer = "AIT课程于2023年7月开课，由สจล.开设。[E1]"
+    assert detect_language(answer) == "th"
+    assert _answer_matches_language(question, answer, "zh") is True
+
+    def unnecessary_rewrite(*args, **kwargs):
+        pytest.fail("A Chinese main answer with a retained Thai proper name must be accepted")
+
+    result = policy_with_rewrite(unnecessary_rewrite)._ensure_answer_language(
+        question, AnswerResult(status="SUPPORTED", answer=answer, programs=["AIT"])
+    )
+    assert result.answer == answer
+    assert result.status == "SUPPORTED"
+
+
+def test_echoed_chinese_question_does_not_disguise_a_thai_answer_as_chinese():
+    answer = CHINESE_EASY_Q3 + "\n\n" + THAI_Q3_ANSWER
+    assert _answer_matches_language(CHINESE_EASY_Q3, answer, "zh") is False
+
+
+def test_chinese_answer_can_quote_thai_evidence_after_a_separate_evidence_heading():
+    answer = "AIT课程于2023年7月开课。[E1]\n证据：\n- [E1] หลักสูตร AIT กำหนดเปิดสอนเดือนกรกฎาคม พ.ศ.2566"
+    assert _answer_matches_language("AIT何时开课?", answer, "zh") is True
+
+
+def test_actual_chinese_easy_opening_question_has_grounded_date_fallback_without_rewrite():
+    question = "AIT人工智能技术专业从什么时候开始招生开课?"
+    catalog = load_catalog(ROOT)
+    evidence = [e for e in load_evidence(ROOT, catalog) if e.program == "AIT" and e.metadata.get("topic") == "opening"]
+
+    def unnecessary_rewrite(*args, **kwargs):
+        pytest.fail("The canonical opening date must not require another upstream request")
+
+    result = policy_with_rewrite(unnecessary_rewrite)._ensure_answer_language(
+        question, AnswerResult(status="SUPPORTED", answer="AIT เปิดสอนเดือนกรกฎาคม พ.ศ.2566", programs=["AIT"], evidence=evidence)
+    )
+    assert result.status == "SUPPORTED"
+    assert "2023年7月" in result.answer
+    assert "2566年第1学期" in result.answer
+    assert "[E1]" in result.answer
+    assert result.debug["canonical_language_fallback"] is True
+    assert _answer_matches_language(question, result.answer, "zh") is True
+
+
+def test_canonical_opening_fallback_rejects_conflicting_or_partial_dates():
+    evidence = [Evidence("opening", "AIT.pdf", 4, "AIT กำหนดเปิดสอนเดือนกรกฎาคม พ.ศ. 2566 ภาคการศึกษาที่ 1/2566", "AIT", kind="canonical", metadata={"topic": "opening"})]
+    result = AnswerResult(status="SUPPORTED", answer="Thai answer", programs=["AIT"], evidence=evidence)
+    question = "AIT人工智能技术专业从什么时候开始招生开课?"
+    assert "2023年7月" in _chinese_opening_fact(question, result)
+    result.evidence.append(Evidence("conflict", "AIT.pdf", 5, "AIT กำหนดเปิดสอนเดือนสิงหาคม พ.ศ. 2566 ภาคการศึกษาที่ 1/2566", "AIT", kind="canonical", metadata={"topic": "opening"}))
+    assert _chinese_opening_fact(question, result) is None
+    result.evidence = [Evidence("partial", "AIT.pdf", 4, "AIT เริ่มในเดือนกรกฎาคม", "AIT", kind="canonical", metadata={"topic": "opening"})]
+    assert _chinese_opening_fact(question, result) is None
