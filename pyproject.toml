@@ -15,4 +15,4 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.vercel]
-entrypoint = "render_app:app"
+entrypoint = "render_chat_app:app"
