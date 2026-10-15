@@ -38,6 +38,22 @@ def _alias_hit(question: str, alias: str) -> bool:
     return a in q
 
 
+# The faculty's name contains the IT degree's aliases. Remove the institution
+# name as a phrase before finding degree names, while retaining any separate
+# mention of IT, IT2565, or IT International elsewhere in the question.
+_FACULTY_NAME_RE = re.compile(
+    r"(?:"
+    r"คณะ\s*(?:เทคโนโลยีสารสนเทศ|it(?![a-z0-9_]))|"
+    r"(?<![a-z0-9_])(?:faculty|school)\s+of\s+(?:information\s+technology|it)(?![a-z0-9_])|"
+    r"(?<![a-z0-9_])(?:information\s+technology|it)\s+(?:faculty|school)(?![a-z0-9_])|"
+    r"(?:信息技术|信息科技|資訊科技)(?:\s*[（(]\s*it\s*[）)])?\s*[学學]院|"
+    r"(?<![a-z0-9_])it\s*[学學]院"
+    r")"
+    r"(?:\s*[（(]\s*(?:it|information\s+technology|เทคโนโลยีสารสนเทศ)\s*[）)])?",
+    re.I,
+)
+
+
 _EXPLICIT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "IT_INTER",
@@ -82,7 +98,7 @@ _EXPLICIT_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def detect_programs(question: str, catalog: dict) -> list[str]:
-    q = _norm(question)
+    q = _FACULTY_NAME_RE.sub(" ", _norm(question))
     hits: list[str] = []
 
     for code, patterns in _EXPLICIT_PATTERNS:

@@ -19,7 +19,7 @@ ENGLISH_REPLACEMENTS = (
     ('อัปโหลด .xlsx / .csv แล้วระบบจะรันทุกคำถามผ่าน pipeline เดียวกับหน้าแชท และดาวน์โหลด CSV แบบ question,answer', 'Upload .xlsx / .csv files, run every question through the same chat pipeline, and download a question,answer CSV.'),
     ('ยังไม่ได้เลือกไฟล์', 'No file selected'),
     ('ใช้ key นี้ใน session', 'Use this key for this session'),
-    ('ใช้ Render key', 'Use Render key'),
+    ('ใช้ Render key', 'Use deployment key'),
     ('เปลี่ยนชื่อ', 'Rename'),
     ('ลบแชท', 'Delete chat'),
     ("return'วันนี้'", "return'Today'"),
