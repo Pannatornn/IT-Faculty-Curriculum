@@ -41,6 +41,18 @@ def rewrite_sheet(data, transform):
     return rewrite_zip(data, lambda name, content: transform(content) if name == "xl/worksheets/sheet1.xml" else content)
 
 
+def rename_worksheet_part(data, *, declare_xml=True):
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as original, zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as rebuilt:
+        for member in original.infolist():
+            name = member.filename.replace("sheet1.xml", "sheet1.bin")
+            content = original.read(member.filename).replace(b"sheet1.xml", b"sheet1.bin")
+            if name == "[Content_Types].xml" and not declare_xml:
+                content = content.replace(b"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml", b"application/octet-stream")
+            rebuilt.writestr(name, content)
+    return output.getvalue()
+
+
 @pytest.mark.parametrize("filename", ["data/evaluation/Easy.xlsx", "knowledge/question_sets/hard_hard10_blank.csv"])
 def test_real_repository_question_files_still_import_all_ten(filename):
     path = ROOT / filename
@@ -60,6 +72,20 @@ def test_tiny_xlsx_with_billion_cell_dimension_is_rejected_before_openpyxl(monke
 def test_false_small_dimension_does_not_silently_drop_questions():
     data = rewrite_sheet(workbook_bytes(), lambda xml: re.sub(br'<dimension ref="[^"]+"', b'<dimension ref="A1:A1"', xml))
     assert importer.parse_xlsx_bytes(data, "small-dimension.xlsx").questions == ["AIT เรียนกี่หน่วยกิต?"]
+
+
+def test_valid_worksheet_xml_with_non_xml_part_name_is_supported():
+    data = rename_worksheet_part(workbook_bytes())
+    assert importer.parse_xlsx_bytes(data, "renamed.xlsx").questions == ["AIT เรียนกี่หน่วยกิต?"]
+
+
+@pytest.mark.parametrize("declare_xml", [True, False])
+def test_renaming_worksheet_cannot_bypass_xml_preflight(monkeypatch, declare_xml):
+    data = rewrite_sheet(workbook_bytes(), lambda xml: re.sub(br'<dimension ref="[^"]+"', b'<dimension ref="A1:XFD1048576"', xml))
+    data = rename_worksheet_part(data, declare_xml=declare_xml)
+    monkeypatch.setattr(importer, "load_workbook", lambda *args, **kwargs: pytest.fail("Renamed unsafe worksheet reached openpyxl"))
+    with pytest.raises(importer.QuestionImportLimitError, match="dimensions"):
+        importer.parse_xlsx_bytes(data, "renamed-limit.xlsx")
 
 
 @pytest.mark.parametrize("coordinate", [b"A5001", b"BM2"])

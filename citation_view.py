@@ -28,9 +28,16 @@ async def serve_document(req: Request):
 def public_answer(text: str) -> str:
     """Remove a model-echoed retrieval dump without removing prose citations."""
     text = str(text or "").strip()
-    marker = re.search(r"(?:^|\n)\s*(?:\*{0,2})EVIDENCE\s*:(?:\*{0,2})\s*\n", text, re.I)
-    if marker and re.search(r"(?:\bID=|\bSOURCE=|\bRETRIEVAL_SCORE=|\bKIND=)", text[marker.end():]):
-        text = text[:marker.start()].rstrip()
+    markers = list(re.finditer(
+        r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*{1,2})?(?:EVIDENCE|RETRIEVAL DETAILS)"
+        r"(?:\*{1,2})?[ \t]*:(?:\*{1,2})?[ \t]*",
+        text, re.I | re.M,
+    ))
+    diagnostics = re.compile(r"\b(?:ID|SOURCE|RETRIEVAL_SCORE|KIND)\s*=", re.I)
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
+        if diagnostics.search(text[marker.end():end]):
+            return text[:marker.start()].rstrip()
     return text
 
 

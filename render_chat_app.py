@@ -47,6 +47,13 @@ CONTEXT_RESET_RE = re.compile(
     re.I,
 )
 
+FACULTY_NAME_RE = re.compile(
+    r"คณะ\s*(?:เทคโนโลยีสารสนเทศ|IT)|"
+    r"\b(?:KMITL\s+)?(?:school|faculty)\s+of\s+(?:information\s+technology|IT)\b|"
+    r"\bIT\s+KMITL\b",
+    re.I,
+)
+
 CHAT_TIMEOUT_SECONDS = 90
 MAX_QUESTION_CHARS = 4000
 MAX_HISTORY_CONTENT_CHARS = 16000
@@ -92,9 +99,17 @@ def _recent_user_programs(history: list[dict]) -> list[str]:
             continue
         if RETRY_REFERENCE_RE.search(text):
             continue
-        if not _can_inherit_program_context(text):
+        all_programs = is_all_program_question(text)
+        scope_text = text
+        if any(re.search(pattern, text, re.I) for pattern in PROGRAM_LIST_PATTERNS):
+            # IT in the faculty name is not an explicit selection of the IT
+            # degree, while "หลักสูตร AIT มีอะไรบ้าง?" still names AIT.
+            scope_text = FACULTY_NAME_RE.sub("", text)
+        programs = detect_programs(scope_text, core.CATALOG)
+        if not _can_inherit_program_context(text, scope_selection=bool(programs) or all_programs):
             return []
-        programs = detect_programs(text, core.CATALOG)
+        if all_programs:
+            return list(core.CATALOG)
         if programs:
             return programs
     return []
@@ -113,11 +128,14 @@ def _latest_user_question(history: list[dict]) -> str:
     return ""
 
 
-def _can_inherit_program_context(question: str) -> bool:
+def _can_inherit_program_context(question: str, *, scope_selection: bool = False) -> bool:
     """Keep context within safe curriculum questions, including short follow-ups."""
-    if CONTEXT_RESET_RE.search(question) or is_all_program_question(question):
+    if CONTEXT_RESET_RE.search(question):
         return False
-    if any(re.search(pattern, question, re.I) for pattern in PROGRAM_LIST_PATTERNS):
+    if not scope_selection and (
+        is_all_program_question(question)
+        or any(re.search(pattern, question, re.I) for pattern in PROGRAM_LIST_PATTERNS)
+    ):
         return False
     if classify_hard_edge(question) or classify_grader_edge(question):
         return False

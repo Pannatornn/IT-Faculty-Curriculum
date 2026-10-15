@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import posixpath
 import re
 import zipfile
 from dataclasses import dataclass
@@ -177,10 +178,27 @@ def _validate_xlsx_archive(data: bytes) -> None:
                 raise QuestionImportLimitError("Workbook ZIP entry expanded size exceeds 16 MB")
             if member.flag_bits & 1 or member.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
                 raise ValueError("Workbook contains unsupported ZIP entries")
-            if not member.filename.casefold().endswith((".xml", ".rels")):
+        by_name = {member.filename: member for member in members}
+        pending = {name for name in by_name if name.casefold().endswith((".xml", ".rels"))}
+        scanned: set[str] = set()
+
+        def queue_xml_part(name):
+            if name not in by_name:
+                raise ValueError("Workbook references a missing XML part")
+            if name not in scanned:
+                pending.add(name)
+
+        while pending:
+            part_name = pending.pop()
+            if part_name in scanned:
                 continue
+            member = by_name.get(part_name)
+            if member is None:
+                raise ValueError("Workbook references a missing XML part")
+            scanned.add(part_name)
             parser = expat.ParserCreate(namespace_separator="}")
             root_seen = False
+            root_name = ""
             is_sheet = False
             row_index = row_count = column_index = cell_count = 0
             max_row = max_column = 0
@@ -189,7 +207,7 @@ def _validate_xlsx_archive(data: bytes) -> None:
                 raise ValueError("Workbook XML must not contain DTD or entity declarations")
 
             def start_element(tag, attrs):
-                nonlocal root_seen, is_sheet, sheets, xml_elements
+                nonlocal root_seen, root_name, is_sheet, sheets, xml_elements
                 nonlocal row_index, row_count, column_index, cell_count, max_row, max_column
                 xml_elements += 1
                 if xml_elements > MAX_XLSX_XML_ELEMENTS:
@@ -197,11 +215,32 @@ def _validate_xlsx_archive(data: bytes) -> None:
                 name = tag.rsplit("}", 1)[-1]
                 if not root_seen:
                     root_seen = True
+                    root_name = name
                     is_sheet = name == "worksheet"
                     if is_sheet:
                         sheets += 1
                         if sheets > MAX_WORKSHEETS:
                             raise QuestionImportLimitError(f"Workbook exceeds {MAX_WORKSHEETS} worksheets")
+                # OPC part names need not end in .xml. Follow declared XML
+                # content types and actual worksheet relationships so renaming
+                # a sheet to .bin cannot bypass this preflight.
+                if root_name == "Types" and attrs.get("ContentType", "").casefold().endswith(("+xml", "/xml")):
+                    if name == "Override":
+                        queue_xml_part(posixpath.normpath(attrs.get("PartName", "").lstrip("/")))
+                    elif name == "Default":
+                        extension = "." + attrs.get("Extension", "").casefold()
+                        for path in by_name:
+                            if path.casefold().endswith(extension):
+                                queue_xml_part(path)
+                elif (
+                    root_name == "Relationships" and name == "Relationship"
+                    and attrs.get("Type", "").endswith("/worksheet")
+                    and attrs.get("TargetMode", "").casefold() != "external"
+                ):
+                    target = attrs.get("Target", "")
+                    base = posixpath.dirname(posixpath.dirname(part_name))
+                    queue_xml_part(posixpath.normpath(target.lstrip("/")) if target.startswith("/")
+                                   else posixpath.normpath(posixpath.join(base, target)))
                 if not is_sheet:
                     return
                 if name == "dimension":
