@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import re
 
+from .batch_fallback import nonempty_error_result
 from .grading_policy import classify_grader_edge
 from .hard_policy import classify_hard_edge, is_all_program_question
 from .models import AnswerResult
+from .output_cleaning import public_answer
 from .pipeline import CompetitionPipeline, render_evidence
 from .policy import (
     classify_pre_route,
@@ -27,6 +29,33 @@ PROGRAM_LIST_PATTERNS = (
 )
 
 ALL_PROGRAMS = ["AIT", "DSBA", "IT", "IT_INTER"]
+
+
+def _chinese_basic_facts(question: str, result: AnswerResult) -> str | None:
+    """Recover only total credits plus duration from unambiguous canonical facts."""
+    if (
+        len(result.programs) != 1
+        or not re.search(r"(?:总共|总计|总学分).*学分|总学分", question)
+        or not re.search(r"学制.*(?:几年|多少年)", question)
+        or re.search(r"专业课|通识|选修|必修|学费|费用|就业|工资|薪资|难度|排名|招生|录取", question)
+    ):
+        return None
+    credits, years = [], []
+    for index, evidence in enumerate(result.evidence, 1):
+        if evidence.kind != "canonical" or evidence.program != result.programs[0]:
+            continue
+        topic = evidence.metadata.get("topic")
+        if topic == "basic":
+            credits.extend((int(n), index) for n in re.findall(r"(\d{2,3})\s*หน่วยกิต", evidence.text))
+        if topic in {"basic", "duration"}:
+            years.extend((int(n), index) for n in re.findall(r"(\d{1,2})\s*ปี", evidence.text))
+    if len({value for value, _ in credits}) != 1 or len({value for value, _ in years}) != 1:
+        return None
+    total, credit_index = credits[0]
+    duration, duration_index = years[0]
+    label = "IT International" if result.programs[0] == "IT_INTER" else result.programs[0]
+    citations = " ".join(f"[E{index}]" for index in dict.fromkeys([credit_index, duration_index]))
+    return f"{label}课程共需修满{total}学分，学制为{duration}年。{citations}"
 
 
 class PolicyCompetitionPipeline(CompetitionPipeline):
@@ -114,11 +143,22 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
             "NEEDS_CONTEXT",
         }:
             return result
+        result.answer = public_answer(result.answer)
         if not result.answer:
-            return result
-
+            return nonempty_error_result(question, "empty visible answer")
         detected = detect_language(result.answer)
         if detected == target:
+            return result
+
+        canonical = _chinese_basic_facts(question, result) if target == "zh" else None
+        if canonical:
+            result.answer = canonical
+            result.status = "SUPPORTED"
+            result.verification = None
+            result.debug = {
+                **(result.debug or {}), "language": target, "answer_language_before": detected,
+                "language_enforced": True, "canonical_language_fallback": True,
+            }
             return result
 
         target_label = {
@@ -149,10 +189,19 @@ class PolicyCompetitionPipeline(CompetitionPipeline):
                 ),
                 max_tokens=self.s.max_tokens,
             )
-            if rewritten.strip():
-                result.answer = rewritten.strip()
+            rewritten = public_answer(rewritten)
+            if not rewritten or detect_language(rewritten) != target:
+                raise ValueError("Language rewrite did not produce the requested language")
+            result.answer = rewritten
         except Exception as exc:
-            result.debug = {**(result.debug or {}), "language_rewrite_error": str(exc)}
+            fallback = nonempty_error_result(question, "answer language could not be enforced")
+            fallback.programs = result.programs
+            fallback.latency_ms = result.latency_ms
+            fallback.debug = {
+                **(result.debug or {}), **fallback.debug, "language_rewrite_error": str(exc),
+                "answer_language_before": detected, "language_enforced": False,
+            }
+            return fallback
 
         result.debug = {
             **(result.debug or {}),

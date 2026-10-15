@@ -19,11 +19,10 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
-from citation_view import evidence_excerpt, public_answer, source_url
-
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from citation_view import evidence_excerpt, public_answer, source_url
 from competition_ai.config import SETTINGS, Settings
 from competition_ai.batch_fallback import nonempty_error_result
 from competition_ai.knowledge import load_catalog, load_evidence

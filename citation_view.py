@@ -8,6 +8,8 @@ from urllib.parse import quote
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse
 
+from competition_ai.output_cleaning import public_answer
+
 
 DOCUMENT_NAMES = frozenset({"AIT.pdf", "DSBA.pdf", "IT2565.pdf", "IT_inter2565.pdf"})
 
@@ -23,22 +25,6 @@ async def serve_document(req: Request):
         path, media_type="application/pdf", content_disposition_type="inline",
         headers={"Cache-Control": "public, max-age=3600", "X-Content-Type-Options": "nosniff"},
     )
-
-
-def public_answer(text: str) -> str:
-    """Remove a model-echoed retrieval dump without removing prose citations."""
-    text = str(text or "").strip()
-    markers = list(re.finditer(
-        r"^[ \t]*(?:#{1,6}[ \t]*)?(?:\*{1,2})?(?:EVIDENCE|RETRIEVAL DETAILS)"
-        r"(?:\*{1,2})?[ \t]*:(?:\*{1,2})?[ \t]*",
-        text, re.I | re.M,
-    ))
-    diagnostics = re.compile(r"\b(?:ID|SOURCE|RETRIEVAL_SCORE|KIND)\s*=", re.I)
-    for index, marker in enumerate(markers):
-        end = markers[index + 1].start() if index + 1 < len(markers) else len(text)
-        if diagnostics.search(text[marker.end():end]):
-            return text[:marker.start()].rstrip()
-    return text
 
 
 def source_url(source: str, page: int | None) -> str | None:

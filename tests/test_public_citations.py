@@ -54,6 +54,35 @@ def test_natural_evidence_section_before_a_technical_dump_is_preserved():
     assert public_answer(prose + "\nEVIDENCE: id=FACT-IT_INTER-1 source=IT_inter2565.pdf") == prose
 
 
+def test_chinese_localized_dump_is_removed_after_the_natural_evidence_paragraph():
+    prose = (
+        "AIT课程于2023年7月（2023年第一学期）开始招生并开课。\n\n"
+        "证据：\n- [E1] AIT课程是新开设的课程，定于2023年7月开课。"
+    )
+    dump = (
+        "\n\n证据：\n[E1] ID=FACT-AIT-1\n来源=AIT.pdf • 第4页\n课程=AIT\n"
+        "类型=canonical\n检索得分=10000.0\n文本：\n原始OCR与不受支持的扩展。"
+    )
+    payload = response_payload(
+        "AIT人工智能技术专业从什么时候开始招生开课?",
+        AnswerResult(status="SUPPORTED", answer=prose + dump, programs=["AIT"]),
+    )
+    assert payload["answer"] == prose
+    assert "ID=" not in payload["answer"]
+    assert "检索得分" not in payload["answer"]
+
+
+@pytest.mark.parametrize("heading", ["หลักฐาน:", "证据：", "Belege:", "دليل:", "### 証拠："])
+def test_structural_retrieval_dump_is_removed_regardless_of_heading_language(heading):
+    answer = "Supported answer [E1].\n\n" + heading + "\n[E1] ID=FACT-AIT-1\n來源=AIT.pdf"
+    assert public_answer(answer) == "Supported answer [E1]."
+
+
+def test_localized_natural_citation_prose_is_not_a_dump():
+    answer = "AIT于2023年7月开课。\n证据：\n- [E1] 课程文件第4页明确说明开课时间。"
+    assert public_answer(answer) == answer
+
+
 def test_excerpt_selects_relevant_source_passage_and_has_bounded_length():
     source = "Unrelated course information. " * 40 + "หมวดวิชาเฉพาะ 90 หน่วยกิต เป็นส่วนหนึ่งของหลักสูตร AIT. " + "Other course information. " * 40
     preview = evidence_excerpt(source, "AIT หมวดวิชาเฉพาะกี่หน่วยกิต?", "90 หน่วยกิต")

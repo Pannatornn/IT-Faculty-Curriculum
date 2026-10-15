@@ -18,13 +18,14 @@ from .security import (
 from .router import route_question
 from .retrieval import retrieve
 from .llm import ThaiLLMClient
+from .policy import detect_language
 from .cache import DiskCache
 from .telemetry import Telemetry
 
 
 # Bump this when retrieval/rerank behavior changes so stale cached answers
 # from older pipeline versions are not reused accidentally.
-PIPELINE_CACHE_VERSION = "rerank-protected-v2"
+PIPELINE_CACHE_VERSION = "language-clean-v3"
 
 
 BLOCKED_TEXT = (
@@ -464,6 +465,14 @@ class CompetitionPipeline:
             encoding="utf-8"
         )
 
+        target_language = {"th": "Thai", "en": "English", "zh": "Simplified Chinese"}.get(
+            detect_language(question), detect_language(question)
+        )
+        system += (
+            f"\nRequired answer language: {target_language}. Use this language for the entire answer. "
+            "Return the answer and brief natural evidence citations only. Never copy retrieval entries, "
+            "ID=, SOURCE=, KIND=, RETRIEVAL_SCORE= or the raw evidence payload into the answer."
+        )
         return self.llm.generate(
             system,
             f"QUESTION:\n{question}\n\n"
