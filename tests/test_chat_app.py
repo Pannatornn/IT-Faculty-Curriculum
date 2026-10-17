@@ -50,7 +50,7 @@ def test_legacy_academic_intelligence_theme_is_applied():
     assert "--bg:#07101d" in html
     assert "--accent:#6366f1" in html
     assert "--teal:#14b8a6" in html
-    assert "Academic</span> <span class=\"brand-teal\">Intelligence" in html
+    assert "IT <span class=\"brand-accent\">KMITL</span> <span class=\"brand-teal\">Curricula</span>" in html
 
 
 def test_chat_runtime_patch_enables_contextual_endpoint():

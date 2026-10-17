@@ -1,4 +1,4 @@
-# ThaiLLM Competition FINAL V2
+# IT KMITL Curricula
 
 ตัวแข่งจริงสำหรับชุดข้อมูล:
 - AIT.pdf

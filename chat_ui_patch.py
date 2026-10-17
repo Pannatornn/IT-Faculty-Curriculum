@@ -3,15 +3,13 @@ from __future__ import annotations
 
 ENGLISH_REPLACEMENTS = (
     ('<html lang="th">', '<html lang="en">'),
-    ('ThaiLLM Academic Chat', 'ThaiLLM Academic Intelligence'),
     ('＋ แชทใหม่', '＋ New chat'),
     ('ค้นหาแชท', 'Search chats'),
     ('⚙ เครื่องมือแข่งขัน', '⚙ Competition tools'),
     ('เข้าสู่ระบบเพื่อเก็บประวัติข้ามอุปกรณ์', 'Sign in to sync chat history across devices'),
     ('แชทใหม่', 'New Chat'),
-    ('พิมพ์ข้อความถึง ThaiLLM...', 'Message ThaiLLM...'),
     ('ถามภาษาไหน ตอบภาษานั้น · คำตอบอ้างอิงชุดข้อมูลหลักสูตร IT KMITL', 'Ask in any language — answers follow the question language · Evidence-grounded IT KMITL curriculum'),
-    ('<h2>เข้าสู่ระบบ</h2>', '<h2>Sign in to ThaiLLM</h2>'),
+    ('<h2>เข้าสู่ระบบ</h2>', '<h2>Sign in to IT KMITL Curricula</h2>'),
     ('ล็อกอินเพื่อเก็บบทสนทนาและเปิดดูย้อนหลังได้จากอุปกรณ์อื่น', 'Sign in to save conversations and access them from any device.'),
     ('>ปิด<', '>Close<'),
     ('<h2>เครื่องมือแข่งขัน</h2>', '<h2>Competition tools</h2>'),
@@ -81,13 +79,13 @@ body{background-image:radial-gradient(circle at 50% 0%,rgba(79,70,229,.16),trans
 
 CHAT_RUNTIME_PATCH = r'''<script>
 // Competition chat runtime patch: multi-turn context, English-first UI,
-// Google OAuth entry point, and old Academic Intelligence visual identity.
+// Google OAuth entry point and IT KMITL Curricula visual identity.
 (()=>{
   document.documentElement.lang='en';
-  document.title='ThaiLLM Academic Intelligence';
+  document.title='IT KMITL Curricula';
 
-  const brand=document.querySelector('.brand > div:last-child');
-  if(brand) brand.innerHTML='ThaiLLM <span class="brand-accent">Academic</span> <span class="brand-teal">Intelligence</span>';
+  const brand=document.querySelector('#appBrand');
+  if(brand) brand.innerHTML='IT <span class="brand-accent">KMITL</span> <span class="brand-teal">Curricula</span>';
 
   const authModal=document.querySelector('#authModal .modal');
   if(authModal && !document.querySelector('#googleAuthBtn')){

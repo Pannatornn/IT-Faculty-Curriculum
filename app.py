@@ -16,7 +16,7 @@ from competition_ai.health import api_health
 
 
 st.set_page_config(
-    page_title="KMITL Curriculum Intelligence",
+    page_title="IT KMITL Curricula",
     page_icon="🧠",
     layout="wide"
 )
@@ -59,8 +59,8 @@ ok, health = api_health(SETTINGS)
 
 st.markdown("""
 <div class="card">
-<h1>🧠 KMITL Curriculum Intelligence</h1>
-<p>ThaiLLM Academic Intelligence • Evidence Grounded • Verified AI</p>
+<h1>🧠 IT KMITL Curricula</h1>
+<p>IT KMITL Curricula • Evidence Grounded • Verified AI</p>
 </div>
 """, unsafe_allow_html=True)
 
